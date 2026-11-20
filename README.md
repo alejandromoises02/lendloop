@@ -88,8 +88,20 @@ npx convex dev          # creates the deployment and writes .env.local
 ### 2. Configure Clerk
 
 1. Create a Clerk application and copy its keys into `.env.local` (see `.env.example`).
-2. In Clerk, go to **Configure → JWT templates**, create a template from the **Convex** preset, and keep its name as `convex`.
-3. Copy the template's **Issuer** URL and set it on Convex:
+2. Connect Clerk to Convex with **one** of these options:
+   - **Convex integration** (Clerk dashboard → Integrations → Convex → Activate). Then open **Configure → Sessions → Customize session token** and make sure the claims include the user's name and email:
+     ```json
+     {
+       "aud": "convex",
+       "name": "{{user.full_name}}",
+       "email": "{{user.primary_email_address}}",
+       "nickname": "{{user.username}}"
+     }
+     ```
+   - **JWT template**: **Configure → JWT templates → New template → Convex**, and keep the name `convex`.
+
+   The email claim is required: the admin role is derived from it.
+3. Copy the **Issuer** URL (your Clerk Frontend API URL) and set it on Convex:
 
 ```bash
 npx convex env set CLERK_JWT_ISSUER_DOMAIN https://<your-app>.clerk.accounts.dev
