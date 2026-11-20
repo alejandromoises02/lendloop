@@ -1,0 +1,24 @@
+services:
+  n8n:
+    image: docker.n8n.io/n8nio/n8n:1.88.0
+    restart: unless-stopped
+    ports:
+      - "5678:5678"
+    env_file: .env.n8n
+    environment:
+      # Code nodes need Node's crypto module for HMAC signing and verification.
+      - NODE_FUNCTION_ALLOW_BUILTIN=crypto
+      # Workflows read the shared secret and the Convex URL from the environment,
+      # so neither ever appears in the exported workflow JSON.
+      - N8N_BLOCK_ENV_ACCESS_IN_NODE=false
+      - GENERIC_TIMEZONE=America/Argentina/Buenos_Aires
+      - N8N_DIAGNOSTICS_ENABLED=false
+    volumes:
+      - n8n_data:/home/node/.n8n
+      - ./n8n/workflows:/workflows:ro
+    extra_hosts:
+      # Lets n8n reach a Convex backend running on the host machine.
+      - "host.docker.internal:host-gateway"
+
+volumes:
+  n8n_data:

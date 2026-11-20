@@ -1,0 +1,99 @@
+{
+  "id": "LendLoopErrors01",
+  "name": "LendLoop – Error handler",
+  "active": false,
+  "nodes": [
+    {
+      "id": "er-trigger",
+      "name": "On workflow error",
+      "type": "n8n-nodes-base.errorTrigger",
+      "typeVersion": 1,
+      "position": [
+        0,
+        300
+      ],
+      "parameters": {}
+    },
+    {
+      "id": "er-build",
+      "name": "Build error event",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        220,
+        300
+      ],
+      "parameters": {
+        "mode": "runOnceForAllItems",
+        "jsCode": "const crypto = require('crypto');\nconst secret = $env.LENDLOOP_SHARED_SECRET;\nif (!secret) throw new Error('LENDLOOP_SHARED_SECRET is not set');\nfunction signed(rawBody) {\n  const timestamp = Math.floor(Date.now() / 1000).toString();\n  const signature = crypto.createHmac('sha256', secret).update(`${timestamp}.${rawBody}`).digest('hex');\n  return { timestamp, signature };\n}\n\n// Runs when any LendLoop workflow fails after its retries, so failures are never silent.\nconst { execution = {}, workflow = {} } = $input.first().json;\nconst detail = `${workflow.name ?? 'Workflow'}: ${execution.error?.message ?? 'unknown error'}`.slice(0, 300);\nconsole.error(`[LendLoop] automation failure: ${detail}`);\nconst body = JSON.stringify({\n  idempotencyKey: `workflow_error:${execution.id ?? Date.now()}`,\n  kind: 'workflow_error',\n  status: 'failed',\n  detail,\n});\nreturn [{ json: { body, ...signed(body) } }];"
+      }
+    },
+    {
+      "id": "er-post",
+      "name": "Write back to Convex",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.2,
+      "position": [
+        440,
+        300
+      ],
+      "retryOnFail": true,
+      "maxTries": 3,
+      "waitBetweenTries": 3000,
+      "parameters": {
+        "method": "POST",
+        "url": "={{ $env.CONVEX_SITE_URL }}/n8n/events",
+        "sendHeaders": true,
+        "headerParameters": {
+          "parameters": [
+            {
+              "name": "X-LendLoop-Timestamp",
+              "value": "={{ $json.timestamp }}"
+            },
+            {
+              "name": "X-LendLoop-Signature",
+              "value": "={{ $json.signature }}"
+            }
+          ]
+        },
+        "sendBody": true,
+        "contentType": "raw",
+        "rawContentType": "application/json",
+        "body": "={{ $json.body }}",
+        "options": {
+          "timeout": 10000
+        }
+      }
+    }
+  ],
+  "connections": {
+    "On workflow error": {
+      "main": [
+        [
+          {
+            "node": "Build error event",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Build error event": {
+      "main": [
+        [
+          {
+            "node": "Write back to Convex",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    }
+  },
+  "settings": {
+    "executionOrder": "v1",
+    "saveDataErrorExecution": "all"
+  },
+  "pinData": {},
+  "tags": []
+}

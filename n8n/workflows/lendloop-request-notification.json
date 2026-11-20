@@ -1,0 +1,253 @@
+{
+  "id": "LendLoopNotify01",
+  "name": "LendLoop – Request notification",
+  "active": false,
+  "nodes": [
+    {
+      "id": "rn-webhook",
+      "name": "Loan event webhook",
+      "type": "n8n-nodes-base.webhook",
+      "typeVersion": 2,
+      "position": [
+        0,
+        300
+      ],
+      "webhookId": "lendloop-loan-events",
+      "parameters": {
+        "httpMethod": "POST",
+        "path": "lendloop/loan-events",
+        "responseMode": "responseNode",
+        "options": {
+          "rawBody": true
+        }
+      }
+    },
+    {
+      "id": "rn-verify",
+      "name": "Verify signature",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        220,
+        300
+      ],
+      "parameters": {
+        "mode": "runOnceForAllItems",
+        "jsCode": "const crypto = require('crypto');\nconst secret = $env.LENDLOOP_SHARED_SECRET;\nif (!secret) throw new Error('LENDLOOP_SHARED_SECRET is not set');\nfunction signed(rawBody) {\n  const timestamp = Math.floor(Date.now() / 1000).toString();\n  const signature = crypto.createHmac('sha256', secret).update(`${timestamp}.${rawBody}`).digest('hex');\n  return { timestamp, signature };\n}\n\n// Verify the HMAC over the exact raw bytes Convex signed, not a re-serialized object.\nconst item = $input.first();\nconst headers = item.json.headers || {};\nconst timestamp = headers['x-lendloop-timestamp'];\nconst signature = String(headers['x-lendloop-signature'] || '');\nconst raw = (await this.helpers.getBinaryDataBuffer(0, 'data')).toString('utf8');\n\nconst skew = Math.abs(Date.now() / 1000 - Number(timestamp));\nconst expected = crypto.createHmac('sha256', secret).update(`${timestamp}.${raw}`).digest('hex');\nconst valid =\n  Number.isFinite(skew) && skew <= 300 &&\n  signature.length === expected.length &&\n  crypto.timingSafeEqual(Buffer.from(signature), Buffer.from(expected));\n\nreturn [{ json: { valid, payload: valid ? JSON.parse(raw) : null } }];"
+      }
+    },
+    {
+      "id": "rn-if",
+      "name": "Signature valid?",
+      "type": "n8n-nodes-base.if",
+      "typeVersion": 2,
+      "position": [
+        440,
+        300
+      ],
+      "parameters": {
+        "conditions": {
+          "options": {
+            "caseSensitive": true,
+            "typeValidation": "strict"
+          },
+          "conditions": [
+            {
+              "id": "valid-check",
+              "leftValue": "={{ $json.valid }}",
+              "rightValue": true,
+              "operator": {
+                "type": "boolean",
+                "operation": "true",
+                "singleValue": true
+              }
+            }
+          ],
+          "combinator": "and"
+        },
+        "options": {}
+      }
+    },
+    {
+      "id": "rn-notify",
+      "name": "Notify recipient (mock)",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        660,
+        200
+      ],
+      "parameters": {
+        "mode": "runOnceForAllItems",
+        "jsCode": "// Mock notification: logs only the fields needed to notify one person.\n// Swap this node for Email / Slack / Discord in production.\nconst p = $input.first().json.payload;\nconst messages = {\n  pending: `New request to borrow your ${p.toolName} (${p.startDate} to ${p.endDate}).`,\n  approved: `Your request for ${p.toolName} was approved (${p.startDate} to ${p.endDate}).`,\n  declined: `Your request for ${p.toolName} was declined.`,\n  cancelled: `A request for your ${p.toolName} was withdrawn.`,\n  returned: `The loan of ${p.toolName} was marked as returned.`,\n};\nconst message = `Hi ${p.recipient.firstName}, ${messages[p.status] ?? 'your loan was updated.'}`;\nconsole.log(`[LendLoop] to=${p.recipient.email} ${message}`);\nreturn [{ json: { loanId: p.loanId, eventId: p.eventId } }];"
+      }
+    },
+    {
+      "id": "rn-sign",
+      "name": "Sign write-back",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        880,
+        200
+      ],
+      "parameters": {
+        "mode": "runOnceForAllItems",
+        "jsCode": "const crypto = require('crypto');\nconst secret = $env.LENDLOOP_SHARED_SECRET;\nif (!secret) throw new Error('LENDLOOP_SHARED_SECRET is not set');\nfunction signed(rawBody) {\n  const timestamp = Math.floor(Date.now() / 1000).toString();\n  const signature = crypto.createHmac('sha256', secret).update(`${timestamp}.${rawBody}`).digest('hex');\n  return { timestamp, signature };\n}\n\nconst { loanId, eventId } = $input.first().json;\nconst body = JSON.stringify({ idempotencyKey: eventId, kind: 'request_notification', loanId, status: 'sent' });\nreturn [{ json: { body, ...signed(body) } }];"
+      }
+    },
+    {
+      "id": "rn-post",
+      "name": "Write back to Convex",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.2,
+      "position": [
+        1100,
+        200
+      ],
+      "retryOnFail": true,
+      "maxTries": 3,
+      "waitBetweenTries": 3000,
+      "parameters": {
+        "method": "POST",
+        "url": "={{ $env.CONVEX_SITE_URL }}/n8n/events",
+        "sendHeaders": true,
+        "headerParameters": {
+          "parameters": [
+            {
+              "name": "X-LendLoop-Timestamp",
+              "value": "={{ $json.timestamp }}"
+            },
+            {
+              "name": "X-LendLoop-Signature",
+              "value": "={{ $json.signature }}"
+            }
+          ]
+        },
+        "sendBody": true,
+        "contentType": "raw",
+        "rawContentType": "application/json",
+        "body": "={{ $json.body }}",
+        "options": {
+          "timeout": 10000
+        }
+      }
+    },
+    {
+      "id": "rn-ok",
+      "name": "Respond 200",
+      "type": "n8n-nodes-base.respondToWebhook",
+      "typeVersion": 1.1,
+      "position": [
+        1320,
+        200
+      ],
+      "parameters": {
+        "respondWith": "json",
+        "responseBody": "={\"ok\": true}",
+        "options": {
+          "responseCode": 200
+        }
+      }
+    },
+    {
+      "id": "rn-401",
+      "name": "Respond 401",
+      "type": "n8n-nodes-base.respondToWebhook",
+      "typeVersion": 1.1,
+      "position": [
+        660,
+        420
+      ],
+      "parameters": {
+        "respondWith": "json",
+        "responseBody": "={\"error\": \"unauthorized\"}",
+        "options": {
+          "responseCode": 401
+        }
+      }
+    }
+  ],
+  "connections": {
+    "Loan event webhook": {
+      "main": [
+        [
+          {
+            "node": "Verify signature",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Verify signature": {
+      "main": [
+        [
+          {
+            "node": "Signature valid?",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Signature valid?": {
+      "main": [
+        [
+          {
+            "node": "Notify recipient (mock)",
+            "type": "main",
+            "index": 0
+          }
+        ],
+        [
+          {
+            "node": "Respond 401",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Notify recipient (mock)": {
+      "main": [
+        [
+          {
+            "node": "Sign write-back",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Sign write-back": {
+      "main": [
+        [
+          {
+            "node": "Write back to Convex",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Write back to Convex": {
+      "main": [
+        [
+          {
+            "node": "Respond 200",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    }
+  },
+  "settings": {
+    "executionOrder": "v1",
+    "saveDataErrorExecution": "all",
+    "errorWorkflow": "LendLoopErrors01"
+  },
+  "pinData": {},
+  "tags": []
+}
