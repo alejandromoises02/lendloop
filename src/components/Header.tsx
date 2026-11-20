@@ -1,9 +1,10 @@
 "use client";
 
 import { SignInButton, UserButton } from "@clerk/nextjs";
-import { Authenticated, Unauthenticated, useQuery } from "convex/react";
+import { Authenticated, Unauthenticated, useMutation, useQuery } from "convex/react";
 import Link from "next/link";
 import { usePathname } from "next/navigation";
+import { useEffect } from "react";
 import { api } from "../../convex/_generated/api";
 
 const LINKS = [
@@ -16,6 +17,13 @@ const LINKS = [
 function Nav() {
   const pathname = usePathname();
   const me = useQuery(api.users.me);
+  const store = useMutation(api.users.store);
+
+  // Create or refresh the user record as soon as someone signs in, on any page,
+  // so the role (and the Admin link) is correct from the first render.
+  useEffect(() => {
+    store({}).catch(() => {});
+  }, [store]);
   const links = me?.role === "admin" ? [...LINKS, { href: "/admin", label: "Admin" }] : LINKS;
   return (
     <nav className="flex flex-wrap gap-1 text-sm">
