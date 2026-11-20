@@ -23,6 +23,8 @@ export const CONDITION_LABEL: Record<Condition, string> = {
 };
 
 export const STATUS_STYLE: Record<string, string> = {
+  available: "bg-brand-50 text-brand-700 border-brand-100",
+  on_loan: "bg-amber-50 text-amber-800 border-amber-200",
   pending: "bg-amber-50 text-amber-800 border-amber-200",
   approved: "bg-brand-50 text-brand-700 border-brand-100",
   declined: "bg-stone-100 text-stone-600 border-stone-200",
