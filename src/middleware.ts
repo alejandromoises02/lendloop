@@ -1,0 +1,13 @@
+import { clerkMiddleware, createRouteMatcher } from "@clerk/nextjs/server";
+
+// Everything except the landing page requires a session. Authorization itself
+// is enforced in Convex functions; this only avoids rendering empty private pages.
+const isPrivate = createRouteMatcher(["/tools(.*)", "/listings(.*)", "/requests(.*)", "/incoming(.*)", "/admin(.*)"]);
+
+export default clerkMiddleware(async (auth, req) => {
+  if (isPrivate(req)) await auth.protect();
+});
+
+export const config = {
+  matcher: ["/((?!_next|[^?]*\\.(?:html?|css|js(?!on)|jpe?g|webp|png|gif|svg|ttf|woff2?|ico|csv|docx?|xlsx?|zip|webmanifest)).*)", "/(api|trpc)(.*)"],
+};
